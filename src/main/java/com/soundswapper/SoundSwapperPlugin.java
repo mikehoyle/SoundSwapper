@@ -27,15 +27,15 @@ package com.soundswapper;
 
 import com.google.inject.Provides;
 import lombok.extern.slf4j.Slf4j;
-import net.runelite.api.Client;
-import net.runelite.api.GameState;
-import net.runelite.api.Preferences;
-import net.runelite.api.SoundEffectVolume;
+import net.runelite.api.*;
+import net.runelite.api.events.AmbientSoundEffectCreated;
 import net.runelite.api.events.AreaSoundEffectPlayed;
 import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.SoundEffectPlayed;
 import net.runelite.client.RuneLite;
 import net.runelite.client.callback.ClientThread;
+import net.runelite.client.chat.ChatMessageManager;
+import net.runelite.client.chat.QueuedMessage;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.EventBus;
 import net.runelite.client.eventbus.Subscribe;
@@ -57,7 +57,8 @@ import java.util.List;
         name = "Sound Swapper",
         description = "Allows the user to replace any sound effect.<br><br>" +
                 "To replace a sound, add its ID to the list in the plugin menu, then place a .wav file with the same name in your root<br>" +
-                "RuneLite folder. The plugin will grab the sound and use it instead!"
+                "RuneLite folder. The plugin will grab the sound and use it instead!<br><br>" +
+                "* Note: Some regions may block sound swapping per Jagex TOS."
 )
 public class SoundSwapperPlugin extends Plugin
 {
@@ -79,6 +80,9 @@ public class SoundSwapperPlugin extends Plugin
     @Inject
     private SoundEffectOverlay soundEffectOverlay;
 
+    @Inject
+    public ChatMessageManager chatMessageManager;
+
     public HashMap<Integer, Sound> customSounds = new HashMap<>();
 
     public HashMap<Integer, Sound> customAreaSounds = new HashMap<>();
@@ -89,6 +93,8 @@ public class SoundSwapperPlugin extends Plugin
     public List<Integer> blacklistedAreaSounds = new ArrayList<>();
     public List<Integer> nativeSoundIDsToSwap = new ArrayList<>();
     public List<Integer> nativeSoundIDReplacements = new ArrayList<>();
+
+    public HashMap<SoundType, String> failureMessages = new HashMap<>();
 
     private static final File SOUND_DIR = new File(RuneLite.RUNELITE_DIR, "SoundSwapper");
 
@@ -139,15 +145,29 @@ public class SoundSwapperPlugin extends Plugin
 
         switch (event.getKey())
         {
+            case "soundEffects":
+            {
+                if (event.getNewValue().equals("true"))
+                    updateSoundList(SoundType.SOUND, customSounds, config.customSounds());
+                break;
+            }
+
             case "customSounds":
             {
-                updateSoundList(customSounds, event.getNewValue());
+                updateSoundList(SoundType.SOUND, customSounds, event.getNewValue());
+                break;
+            }
+
+            case "areaSoundEffects":
+            {
+                if (event.getNewValue().equals("true"))
+                    updateSoundList(SoundType.AREA, customAreaSounds, config.customAreaSounds());
                 break;
             }
 
             case "customAreaSounds":
             {
-                updateSoundList(customAreaSounds, event.getNewValue());
+                updateSoundList(SoundType.AREA, customAreaSounds, event.getNewValue());
                 break;
             }
 
@@ -175,7 +195,8 @@ public class SoundSwapperPlugin extends Plugin
                 break;
             }
 
-            case "consumeAmbientSounds": {
+            case "consumeAmbientSounds":
+            {
                 clientThread.invokeLater(() ->
                 {
                     // Reload the scene to reapply ambient sounds
@@ -187,13 +208,15 @@ public class SoundSwapperPlugin extends Plugin
                 break;
             }
 
-            case "nativeSoundIDsToReplace": {
-                nativeSoundIDsToSwap = getIds( event.getNewValue() );
+            case "nativeSoundIDsToReplace":
+            {
+                nativeSoundIDsToSwap = getIds(event.getNewValue());
                 break;
             }
 
-            case "nativeSoundIDReplacements": {
-                nativeSoundIDReplacements = getIds( event.getNewValue() );
+            case "nativeSoundIDReplacements":
+            {
+                nativeSoundIDReplacements = getIds(event.getNewValue());
                 break;
             }
         }
@@ -205,12 +228,12 @@ public class SoundSwapperPlugin extends Plugin
     {
         if (!config.customSounds().isEmpty())
         {
-            updateSoundList(customSounds, config.customSounds());
+            updateSoundList(SoundType.SOUND, customSounds, config.customSounds());
         }
 
         if (!config.customAreaSounds().isEmpty())
         {
-            updateSoundList(customAreaSounds, config.customAreaSounds());
+            updateSoundList(SoundType.AREA, customAreaSounds, config.customAreaSounds());
         }
 
         if (!config.whitelistSounds().isEmpty())
@@ -247,14 +270,28 @@ public class SoundSwapperPlugin extends Plugin
     @Subscribe
     public void onSoundEffectPlayed(SoundEffectPlayed event)
     {
+        int soundId = event.getSoundId();
+
+        if (config.consumeSoundEffects() || blacklistedSounds.contains(soundId))
+        {
+            if (!whitelistedSounds.isEmpty() && whitelistedSounds.contains(soundId))
+            {
+                log.debug("whitelisted other sound effect passed: {}", soundId);
+                return;
+            }
+
+            log.debug("consumed other sound effect: {}", soundId);
+            event.consume();
+            return;
+        }
+
         if (BlockedRegions.inBlockedRegion(client))
         {
             return;
         }
 
-        int soundId = event.getSoundId();
-
-        if (config.nativeSoundIDSwapEnable()) {
+        if (config.nativeSoundIDSwapEnable())
+        {
             if (nativeSoundIDsToSwap.contains(soundId))
             {
                 int idx = nativeSoundIDsToSwap.indexOf(soundId);
@@ -287,29 +324,30 @@ public class SoundSwapperPlugin extends Plugin
                 return;
             }
         }
-
-        if (config.consumeSoundEffects() || blacklistedSounds.contains(soundId))
-        {
-            if (!whitelistedSounds.isEmpty() && whitelistedSounds.contains(soundId))
-            {
-                log.debug("whitelisted other sound effect passed: {}", soundId);
-                return;
-            }
-
-            log.debug("consumed other sound effect: {}", soundId);
-            event.consume();
-        }
     }
 
     @Subscribe
     public void onAreaSoundEffectPlayed(AreaSoundEffectPlayed event)
     {
+        int soundId = event.getSoundId();
+
+        if (config.consumeAreaSounds() || blacklistedAreaSounds.contains(soundId))
+        {
+            if (!whitelistedAreaSounds.isEmpty() && whitelistedAreaSounds.contains(soundId))
+            {
+                log.debug("whitelisted area sound effect passed: {}", soundId);
+                return;
+            }
+
+            log.debug("consumed area sound effect: {}", soundId);
+            event.consume();
+            return;
+        }
+
         if (BlockedRegions.inBlockedRegion(client))
         {
             return;
         }
-
-        int soundId = event.getSoundId();
 
         if (config.nativeSoundIDSwapEnable()) {
             if (nativeSoundIDsToSwap.contains(soundId))
@@ -344,17 +382,14 @@ public class SoundSwapperPlugin extends Plugin
                 return;
             }
         }
+    }
 
-        if (config.consumeAreaSounds() || blacklistedAreaSounds.contains(soundId))
+    @Subscribe
+    public void onAmbientSoundEffectCreated(AmbientSoundEffectCreated event)
+    {
+        if (config.consumeAmbientSounds())
         {
-            if (!whitelistedAreaSounds.isEmpty() && whitelistedAreaSounds.contains(soundId))
-            {
-                log.debug("whitelisted area sound effect passed: {}", soundId);
-                return;
-            }
-
-            log.debug("consumed area sound effect: {}", soundId);
-            event.consume();
+            client.getAmbientSoundEffects().clear();
         }
     }
 
@@ -368,10 +403,13 @@ public class SoundSwapperPlugin extends Plugin
             {
                 client.getAmbientSoundEffects().clear();
             }
+
+            // Notify the user on login for sound failures that are determined on Startup
+            queueFailureMessages();
         }
     }
 
-    private boolean tryLoadSound(HashMap<Integer, Sound> sounds, String sound_name, Integer sound_id)
+    private boolean tryLoadSound(SoundType type, HashMap<Integer, Sound> sounds, String sound_name, Integer sound_id)
     {
         File sound_file = new File(SOUND_DIR, sound_name + ".wav");
 
@@ -391,30 +429,61 @@ public class SoundSwapperPlugin extends Plugin
 
                 return true;
             }
-            catch (UnsupportedAudioFileException | IOException e)
+            catch (UnsupportedAudioFileException e)
             {
-                log.warn("Unable to load custom sound " + sound_name, e);
+                failureMessages.put(type, sound_name + ": unsupported audio format");
+				log.warn("Unable to load custom sound {}", sound_name, e);
+            }
+            catch (IOException e)
+            {
+                failureMessages.put(type, sound_name + ": IO error");
+				log.warn("Unable to load custom sound {}", sound_name, e);
+            }
+            catch (Exception e)
+            {
+                failureMessages.put(type, sound_name + ": unknown error");
+                log.warn("Unable to load custom sound {}", sound_name, e);
+            }
+        }
+        else
+        {
+            // Attempt a ".wav.wav" fallback for users who put the file type in name
+            File fallback_file = new File(SOUND_DIR, sound_name + ".wav" + ".wav");
+            if (fallback_file.exists())
+            {
+                log.debug("Located fallback file for custom sound {}", sound_name);
+                return tryLoadSound(type, sounds, sound_name + ".wav", sound_id);
+            }
+            else
+            {
+                failureMessages.put(type, sound_name + ": file does not exist");
+                log.warn("Unable to locate file for custom sound {}", sound_name);
             }
         }
 
         return false;
     }
 
-    private void updateSoundList(HashMap<Integer, Sound> sounds, String configText)
+    private void updateSoundList(SoundType type, HashMap<Integer, Sound> sounds, String configText)
     {
         sounds.clear();
+        failureMessages.clear();
 
         for (String s : Text.fromCSV(configText))
         {
             try
             {
                 int id = Integer.parseInt(s);
-                tryLoadSound(sounds, s, id);
+                tryLoadSound(type, sounds, s, id);
+
             } catch (NumberFormatException e)
             {
-                log.warn("Invalid sound ID: {}", s);
+                queueChatMessage("Sound Swapper has been provided with an invalid " + type.getType() + " Id: " + s);
+                log.warn("Invalid {} sound ID: {}", type.getType(), s);
             }
         }
+
+        queueFailureMessages();
     }
 
     private List<Integer> getIds(String configText)
@@ -424,6 +493,7 @@ public class SoundSwapperPlugin extends Plugin
             return List.of();
         }
 
+        boolean shouldNotify = false;
         List<Integer> ids = new ArrayList<>();
         for (String s : Text.fromCSV(configText))
         {
@@ -435,8 +505,12 @@ public class SoundSwapperPlugin extends Plugin
             catch (NumberFormatException e)
             {
                 log.warn("Invalid id when parsing {}: {}", configText, s);
+                shouldNotify = true;
             }
         }
+
+        if (shouldNotify)
+            queueChatMessage("Sound Swapper failed to parse a portion of the recently altered config due to an invalid value: " + configText);
 
         return ids;
     }
@@ -481,6 +555,31 @@ public class SoundSwapperPlugin extends Plugin
         blacklistedAreaSounds = new ArrayList<>();
         nativeSoundIDsToSwap = new ArrayList<>();
         nativeSoundIDReplacements = new ArrayList<>();
+        failureMessages = new HashMap<>();
         soundEffectOverlay.resetLines();
+    }
+
+    public void queueChatMessage(String message)
+    {
+        if (client.getGameState() == GameState.LOGGED_IN)
+        {
+            chatMessageManager.queue(QueuedMessage.builder().type(ChatMessageType.GAMEMESSAGE).value(message).build());
+        }
+    }
+
+    public void queueFailureMessages()
+    {
+        if (failureMessages.isEmpty())
+            return;
+
+        queueChatMessage("Sound Swapper failed to load the following sounds:");
+
+        failureMessages.forEach((type, failure) ->
+        {
+            // e.g. "- Sound Id 2266: file does not exist" or "- Area Sound Id 10236: unsupported audio file format"
+            String message = "- " + type.getType() + " Id " + failure;
+
+            queueChatMessage(message);
+        });
     }
 }

@@ -51,12 +51,14 @@ class SoundEffectOverlay extends OverlayPanel
     private final static Color COLOR_CUSTOM = Color.PINK;
     private final static Color COLOR_BLACKLISTED = Color.ORANGE;
     private final static Color COLOR_WHITELISTED = Color.WHITE;
+    private final static Color COLOR_BLOCKED_REGION = Color.RED;
 
     public static final String ALLOWED = "Allowed";
     public static final String BLACKLISTED = "Blacklisted";
     public static final String CONSUMED = "Consumed";
     public static final String CUSTOM = "Custom";
     public static final String WHITELISTED = "Whitelisted";
+    public static final String BLOCKED_REGION = "Blocked Region";
 
     private final Client client;
     private SoundSwapperPlugin plugin;
@@ -125,8 +127,16 @@ class SoundEffectOverlay extends OverlayPanel
 
         if (plugin.customSounds.containsKey(soundId))
         {
-            action = CUSTOM;
-            actionColor = COLOR_CUSTOM;
+            if (BlockedRegions.inBlockedRegion(client))
+            {
+                action = BLOCKED_REGION;
+                actionColor = COLOR_BLOCKED_REGION;
+            }
+            else
+            {
+                action = CUSTOM;
+                actionColor = COLOR_CUSTOM;
+            }
         }
 
         panelComponent.getChildren().add(LineComponent.builder()
@@ -192,8 +202,16 @@ class SoundEffectOverlay extends OverlayPanel
 
         if (plugin.customAreaSounds.containsKey(soundId))
         {
-            action = CUSTOM;
-            actionColor = COLOR_CUSTOM;
+            if (BlockedRegions.inBlockedRegion(client))
+            {
+                action = BLOCKED_REGION;
+                actionColor = COLOR_BLOCKED_REGION;
+            }
+            else
+            {
+                action = CUSTOM;
+                actionColor = COLOR_CUSTOM;
+            }
         }
 
         panelComponent.getChildren().add(LineComponent.builder()

@@ -225,16 +225,6 @@ public interface SoundSwapperConfig extends Config
     default boolean consumeAmbientSounds() { return false; }
 
     @ConfigItem(
-            keyName = "debugSoundEffects",
-            name = "Debug Sounds Effects",
-            description = "Display the sound effects that play (max 10 lines displayed)<br><br>" +
-                    "White: Sound Effect (G)<br>" +
-                    "Yellow: Area Sound Effect (A)<br>" +
-                    "Gray: Silent Area Sound Effect (SA)",
-            position = 98
-    )
-    default boolean debugSoundEffects() { return false; }
-    @ConfigItem(
             keyName = "nativeSoundIDSwapEnable",
             name = "Enable Native ID Swaps",
             description = "Enables direct replacements of native Sound IDs with another native Sound ID",
@@ -265,4 +255,15 @@ public interface SoundSwapperConfig extends Config
     {
         return "";
     }
+
+    @ConfigItem(
+            keyName = "debugSoundEffects",
+            name = "Debug Sounds Effects",
+            description = "Display the sound effects that play (max 10 lines displayed)<br><br>" +
+                    "White: Sound Effect (G)<br>" +
+                    "Yellow: Area Sound Effect (A)<br>" +
+                    "Gray: Silent Area Sound Effect (SA)",
+            position = 98
+    )
+    default boolean debugSoundEffects() { return false; }
 }
